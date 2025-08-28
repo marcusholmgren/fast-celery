@@ -1,0 +1,16 @@
+[project]
+name = "fast-celery"
+version = "0.1.0"
+description = "Add your description here"
+requires-python = ">=3.12"
+dependencies = [
+    "aiosqlite>=0.21.0",
+    "alchemical>=1.0.2",
+    "celery>=5.5.2",
+    "fastapi[standard]>=0.115.12",
+    "greenlet>=3.0.3",
+    "redis>=6.0.0",
+]
+
+[dependency-groups]
+dev = ["celery-types>=0.23.0"]
