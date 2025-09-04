@@ -1,3 +1,6 @@
+"""
+This module contains the Celery worker and tasks for the booking service.
+"""
 import time
 import anyio
 import logging
@@ -21,12 +24,21 @@ class PaymentFailed(Exception):
 
 
 class BaseTaskWithRetry(Task):
+    """
+    Base task with automatic retry mechanism.
+    """
     autoretry_for = (Exception, KeyError)
     retry_kwargs = {'max_retries': 5}
     retry_backoff = True
 
 
 async def _process_payment(booking_id):
+    """
+    Helper function to process the payment for a booking.
+
+    Args:
+        booking_id (int): The ID of the booking to process the payment for.
+    """
     async with db.Session() as session:
         booking = await session.get(Booking, booking_id)
         if not booking:
@@ -50,12 +62,24 @@ async def _process_payment(booking_id):
 
 @app.task(bind=True, base=BaseTaskWithRetry)
 def process_payment(self, booking_id):
+    """
+    Celery task to process the payment for a booking.
+
+    Args:
+        booking_id (int): The ID of the booking to process the payment for.
+    """
     logger.info(f"{type(self)} -- Starting payment processing for booking_id: {booking_id}")
     anyio.run(_process_payment, booking_id)
     return booking_id
 
 
 async def _send_confirmation_email(booking_id):
+    """
+    Helper function to send a confirmation email for a booking.
+
+    Args:
+        booking_id (int): The ID of the booking to send the confirmation email for.
+    """
     async with db.Session() as session:
         booking = await session.get(Booking, booking_id)
         if not booking:
@@ -70,12 +94,24 @@ async def _send_confirmation_email(booking_id):
 
 @app.task(bind=True)
 def send_confirmation_email(self, booking_id):
+    """
+    Celery task to send a confirmation email for a booking.
+
+    Args:
+        booking_id (int): The ID of the booking to send the confirmation email for.
+    """
     logger.info(f"{type(self)} -- Sending confirmation email for booking_id: {booking_id}")
     anyio.run(_send_confirmation_email, booking_id)
     return booking_id
 
 
 async def _cancel_booking(booking_id):
+    """
+    Helper function to cancel a booking.
+
+    Args:
+        booking_id (int): The ID of the booking to cancel.
+    """
     async with db.Session() as session:
         booking = await session.get(Booking, booking_id)
         if not booking:
@@ -88,23 +124,43 @@ async def _cancel_booking(booking_id):
 
 @app.task(bind=True)
 def cancel_booking(self, failed_task_id, booking_id, *args, **kwargs):
+    """
+    Celery task to cancel a booking. This is used as an error handler in the booking saga.
+
+    Args:
+        failed_task_id (str): The ID of the task that failed.
+        booking_id (int): The ID of the booking to cancel.
+    """
     logger.info(f"{type(self)} -- Cancelling booking_id: {booking_id} due to failed task: {failed_task_id}")
     anyio.run(_cancel_booking, booking_id)
 
 
 @app.task
 def booking_saga(booking_id):
-    # Create a chain of tasks for the saga
+    """
+    Celery task that orchestrates the booking saga.
+    The saga is a chain of tasks that are executed in order.
+    If any task in the chain fails, the `cancel_booking` task is called.
+
+    Args:
+        booking_id (int): The ID of the booking to start the saga for.
+    """
+    # Create a chain of tasks for the saga.
+    # The chain consists of processing the payment and sending a confirmation email.
+    # If any of these tasks fail, the `on_error` handler is called, which cancels the booking.
     saga = chain(
         process_payment.s(booking_id),
         send_confirmation_email.s(),
     ).on_error(cancel_booking.s(booking_id))
 
-    # Execute the saga
+    # Execute the saga asynchronously.
     saga.apply_async()
 
 
 async def _get_unprocessed_bookings():
+    """
+    Helper function to get all unprocessed bookings from the database.
+    """
     async with db.Session() as session:
         unprocessed = await session.execute(
             select(Booking).where(Booking.status == "pending")
@@ -115,7 +171,7 @@ async def _get_unprocessed_bookings():
 @app.task
 def get_unprocessed_bookings():
     """
-    Checks for bookings that have not been processed yet.
+    Celery task to get all unprocessed bookings and return their IDs.
     """
     logger.info("Checking for unprocessed bookings.")
     unprocessed_bookings = anyio.run(_get_unprocessed_bookings)
